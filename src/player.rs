@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     get_input,
-    spell::{Reaction, Spell},
-    Hand, TryUntilValid,
+    spell::{AttackType, Reaction, Spell, SpellType},
+    Hand,
 };
 
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ impl Display for Player {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum Decision {
     Attack,
     Breather,
@@ -48,10 +48,10 @@ impl Display for GenericError {
     }
 }
 
-impl TryFrom<&String> for Decision {
+impl TryFrom<String> for Decision {
     type Error = GenericError;
 
-    fn try_from(value: &String) -> Result<Self, Self::Error> {
+    fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
             "attack" => Ok(Self::Attack),
             "breather" => Ok(Self::Breather),
@@ -59,20 +59,6 @@ impl TryFrom<&String> for Decision {
                 "{} is not a valid action",
                 value
             ))),
-        }
-    }
-}
-
-impl TryUntilValid<'_, Decision> for Lines<StdinLock<'_>> {
-    fn try_until_valid(&mut self) -> Decision {
-        loop {
-            let next = self.next().expect("msg").expect("msg");
-            match Decision::try_from(&next) {
-                Ok(d) => return d,
-                Err(e) => {
-                    println!("{}, try again.", e)
-                }
-            }
         }
     }
 }
@@ -90,15 +76,31 @@ impl Player {
         get_input()
     }
 
-    pub fn form_spell(&self) -> Spell {
-        todo!("form spell");
+    pub fn form_attack_spell<'a, F: FnOnce(&'a Vec<String>) -> AttackType>(
+        &self,
+        words: &'a Vec<String>,
+        get_type: F,
+    ) -> Result<Spell, GenericError> {
+        if !self.has_words(words) {
+            return Err(GenericError::Oops(format!(
+                "Player does not have words {:?}",
+                words
+            )));
+        }
+
+        let attack_kind = get_type(words);
+
+        Ok(Spell {
+            words: words.clone(),
+            spelltype: SpellType::Attack(attack_kind),
+        })
     }
 
     pub fn react_to_spell(&self, spell: &Spell) -> Reaction {
         todo!("react")
     }
 
-    pub fn has_words(&self, words: Vec<String>) -> bool {
+    pub fn has_words(&self, words: &Vec<String>) -> bool {
         words.iter().all(|word| self.hand.words().contains(word))
     }
 }

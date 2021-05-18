@@ -1,18 +1,12 @@
 use std::{
-    borrow::Borrow,
-    convert::TryInto,
     io::{stdin, BufRead},
-    iter::Filter,
-    slice::Iter,
     thread::sleep,
 };
 
 use shizzards::{
-    game::BaseGame,
-    hand::Hand,
+    get_input,
     player::{Decision, Player},
-    spell::{AttackType, Reaction},
-    Game, TryUntilValid,
+    spell::Reaction,
 };
 
 fn main() {
@@ -24,13 +18,13 @@ fn main() {
         Player::new("Tim".into(), words.clone()),
         Player::new("Bob".into(), words.clone()),
     ];
-    let mut player_iter = players.iter().cycle();
+    let mut player_iter = players.iter_mut().cycle();
 
     while players.len() > 1 {
         println!("Advancing a turn");
 
         // Advance Turn order
-        let active_player = player_iter.next().expect("Oops");
+        let mut active_player = player_iter.next().expect("Oops");
 
         let mut others = players.iter().filter(|p| *p != active_player);
 
@@ -39,7 +33,7 @@ fn main() {
             "It is {}'s turn, what will they do? [attack, breather]",
             &active_player.name
         );
-        let decision = stdin().lock().lines().try_until_valid();
+        let decision = get_input();
         match decision {
             Decision::Attack => {
                 // Who will you attack?
@@ -51,11 +45,9 @@ fn main() {
                 );
 
                 let target = try_until_valid_player(others);
-                do_fight(
-                    active_player,
-                    target,
-                    third_parties(active_player, target, players.iter()),
-                );
+                let tgt_clone = target.clone();
+                let others = third_parties(active_player, &tgt_clone, players.iter());
+                do_fight(active_player, target, others);
             }
             Decision::Breather => {
                 println!(
@@ -67,7 +59,7 @@ fn main() {
                     println!("{} objects, prepare to fight!", objecting_player.name);
                     do_fight(
                         objecting_player,
-                        active_player,
+                        &mut active_player,
                         third_parties(objecting_player, active_player, players.iter()),
                     );
                 }
@@ -78,29 +70,101 @@ fn main() {
     }
 }
 
-fn do_fight<'a>(aggressor: &Player, defender: &Player, others: impl Iterator<Item = &'a Player>) {
+fn do_fight<'a>(
+    aggressor: &Player,
+    defender: &mut Player,
+    others: impl Iterator<Item = &'a Player>,
+) {
     println!("What spell will {} cast?", aggressor);
-    let mut spell = aggressor.form_spell();
+    let words = stdin()
+        .lock()
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap()
+        .split(" ")
+        .map(str::to_string)
+        .collect();
 
-    println!(
-        "{} cast '{}'. What kind of spell is this? [direct, hindrance, clever trick]",
-        aggressor, &spell
-    );
+    let ask_for_attack_type = |words| {
+        println!(
+            "{} is casting {:?} on {}. What kind of spell is this? [direct, hindrance, clever trick]",
+            aggressor, words, defender,
+        );
+        get_input()
+    };
+    let mut spell = aggressor
+        .form_attack_spell(&words, ask_for_attack_type)
+        .expect("TODO: deal with bad spells");
 
-    println!(
-        "How will {} react? [deflect, block, counter, frantically dodge]",
-        defender
-    );
-    let neutralized = false;
+    let mut neutralized = false;
     while !neutralized {
-        match defender.react_to_spell(&spell) {
+        println!("Spell is inbound with words '{:?}'.", spell);
+        println!(
+            "How will {} react? [deflect, block, counter, frantically dodge]",
+            defender
+        );
+        let reaction = match defender.react_to_spell(&spell) {
             Reaction::Deflect { altered_spell } => {
                 println!("{} deflects! The spell is now '{}'. What effect did the substitution have? [neutralized, weakened, redirected]", defender, altered_spell);
                 spell = altered_spell.clone();
+                todo!("Determine effect");
+                true
             }
-            Reaction::Block { defensive_spell } => {}
-            Reaction::Counter { defensive_spell } => {}
-            Reaction::FranticallyDodge { words_negated } => {}
+            Reaction::Block { defensive_spell } => {
+                // neutralize as many words in the original spell
+                for _ in defensive_spell.words {
+                    spell.words.pop();
+                }
+
+                spell.words.is_empty()
+            }
+            Reaction::Counter { defensive_spell } => {
+                println!(
+                    "{} tries to perfectly counter with '{}'! Did it work? [yes, no]",
+                    defender, defensive_spell
+                );
+
+                // If the other wizards are cool with it, the defender is safe.
+                // otherwise, return the words to the defender's hand.
+                let response = stdin().lock().lines().next().unwrap().unwrap();
+                match response.as_str() {
+                    "yes" => true,
+                    _ => {
+                        defensive_spell
+                            .words
+                            .iter()
+                            .for_each(|w| defender.hand.give_word(w.clone()));
+                        false
+                    }
+                }
+            }
+            Reaction::FranticallyDodge { words_negated } => {
+                // Give up two cards for every word negated.
+                // TODO: allow the player to choose words.
+                loop {
+                    println!("Pick words from your hand. Every two will negate one word from the inbound spell.");
+                    let words_to_discard = try_until_player_has_words(defender);
+                    if words_to_discard.len() % 2 == 0 {
+                        words_to_discard
+                            .iter()
+                            .for_each(|w| drop(defender.hand.take_word(w).unwrap()));
+
+                        for i in 0..words_to_discard.len() / 2 {
+                            spell.words.pop();
+                        }
+                        break;
+                    } else {
+                        println!("Must be an even number of words!");
+                    }
+                }
+
+                spell.words.is_empty()
+            }
+        };
+
+        if neutralized {
+            println!("Spell is neutralized - {} is safe!", defender);
         }
     }
 }
@@ -113,27 +177,27 @@ fn third_parties<'a>(
     all_players.filter(move |p| *p != a && *p != b)
 }
 
-fn try_until_valid_player<'a>(players: impl Iterator<Item = &'a Player>) -> &'a Player {
-    let inputs = stdin().lock().lines();
+fn try_until_valid_player<'a>(mut players: impl Iterator<Item = &'a Player>) -> &'a mut Player {
     loop {
-        let name = inputs.next().unwrap().unwrap();
+        let name = stdin().lock().lines().next().unwrap().unwrap();
         match players.find(|p| p.name == name) {
-            Some(p) => return p,
+            Some(p) => return &mut p,
             None => println!("Could not find player '{}', try again.", name),
         }
     }
 }
 
 fn try_until_player_has_words(player: &Player) -> Vec<String> {
-    let lines = stdin().lock().lines();
-    for l in lines {
-
-        let next = stdin().lock().lines().next().expect("msg").expect("msg");
-        let words = next.
-        match  {
-            Ok(spellformation) => return d,
-            Err(e) => {
-                println!("{}, try again.", e)
+    loop {
+        let line = stdin().lock().lines().next().unwrap().unwrap();
+        let words = line.split(" ").map(str::to_string).collect();
+        match player.has_words(&words) {
+            true => return words,
+            false => {
+                println!(
+                    "Player {} does not have all of words '{:?}', try again.",
+                    player, words
+                );
             }
         }
     }
