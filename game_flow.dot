@@ -1,0 +1,27 @@
+digraph G {
+    NextPlayerTurn->Attack
+    NextPlayerTurn->Breather
+    
+    // attack
+    Attack->ChooseTarget
+    ChooseTarget->FormAttackSpell
+    FormAttackSpell->DefenderReacts
+    DefenderReacts->Deflect
+    DefenderReacts->Block
+    DefenderReacts->Counter
+    DefenderReacts->FranticallyDodge
+    DefenderReacts->GetHit
+    Deflect->SpellMaybeNeutralized
+    Block->SpellMaybeNeutralized
+    Counter->SpellMaybeNeutralized
+    FranticallyDodge->SpellMaybeNeutralized
+    SpellMaybeNeutralized->DefenderReacts
+    GetHit->Die
+    GetHit->Hindered
+    Hindered->NextPlayerTurn
+    SpellMaybeNeutralized->NextPlayerTurn
+    
+    // breather
+    Breather->SomeoneObjects->FormAttackSpell
+    Breather->EveryoneDrawsCards->NextPlayerTurn
+}
